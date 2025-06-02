@@ -2,15 +2,12 @@ import logging
 from typing import List, Dict, Any
 import sys
 from pathlib import Path
-import json
 from datetime import datetime
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from mcp.server.fastmcp import FastMCP
-from model.payment_method_request import PaymentMethodRequest
-from model.payment_method_response import PaymentMethodResponse
 
 # Configure logging
 logging.basicConfig(
@@ -51,25 +48,6 @@ MOCK_USERS = {
                 "nickname": "Freedom Unlimited"
             }
         ]
-    },
-    "user3": {
-        "name": "Bob Wilson",
-        "payment_methods": [
-            {
-                "card_id": "card_004",
-                "type": "credit",
-                "brand": "Chase Sapphire Reserve",
-                "last4": "3456",
-                "nickname": "Reserve Card"
-            },
-            {
-                "card_id": "card_005",
-                "type": "credit",
-                "brand": "Chase Freedom",
-                "last4": "7890",
-                "nickname": "Freedom Card"
-            }
-        ]
     }
 }
 
@@ -84,71 +62,48 @@ class PaymentMethodError(Exception):
         self.details = details or {}
         super().__init__(self.message)
 
-def get_user_payment_methods(user_id: str) -> List[Dict[str, Any]]:
+@mcp.tool()
+async def get_payment_methods(user_id: str) -> Dict[str, Any]:
     """
-    Get payment methods for a specific user.
+    Retrieve available payment methods for a user.
     
     Args:
-        user_id: The user's ID
-        
+        user_id: Unique identifier for the user (e.g., 'user1')
+    
     Returns:
-        List[Dict[str, Any]]: List of payment methods
-        
-    Raises:
-        PaymentMethodError: If user_id is not found or other errors occur
-    """
-    logger.info(f"Processing request for user ID: {user_id}")
+        Dict containing:
+        - payment_methods: List of payment methods with card details
+        - request_id: Unique identifier for the request
+        - timestamp: Request timestamp
     
-    if not user_id:
-        raise PaymentMethodError(
-            "No user ID provided",
-            "MISSING_USER_ID",
-            {"required": "A valid user ID must be provided"}
-        )
-    
-    if user_id not in MOCK_USERS:
-        raise PaymentMethodError(
-            f"User {user_id} not found",
-            "USER_NOT_FOUND",
-            {
-                "invalid_user_id": user_id,
-                "valid_user_ids": list(MOCK_USERS.keys())
-            }
-        )
-    
-    methods = MOCK_USERS[user_id]["payment_methods"]
-    logger.info(f"Found {len(methods)} payment methods for user {user_id}")
-    return methods
-
-async def get_payment_methods(request: PaymentMethodRequest) -> List[PaymentMethodResponse]:
-    """
-    Get all payment methods for a user.
-    
-    Args:
-        request: The payment method request containing the user ID
-        
-    Returns:
-        List[PaymentMethodResponse]: List of payment methods
+    Example request:
+        {
+            "user_id": "user1"
+        }
     """
     request_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    logger.info(f"[{request_id}] Received request for payment methods: user_id={request.user_id}")
+    logger.info(f"[{request_id}] Retrieving payment methods for user: {user_id}")
     
     try:
-        methods = get_user_payment_methods(request.user_id)
-        
-        response_methods = [
-            PaymentMethodResponse(
-                card_id=method["card_id"],
-                type=method["type"],
-                brand=method["brand"],
-                last4=method["last4"],
-                nickname=method["nickname"]
+        if user_id not in MOCK_USERS:
+            raise PaymentMethodError(
+                f"User {user_id} not found",
+                "USER_NOT_FOUND",
+                {
+                    "invalid_user_id": user_id,
+                    "valid_user_ids": list(MOCK_USERS.keys())
+                }
             )
-            for method in methods
-        ]
+            
+        payment_methods = MOCK_USERS[user_id]["payment_methods"]
+        response = {
+            "payment_methods": payment_methods,
+            "request_id": request_id,
+            "timestamp": datetime.now().isoformat()
+        }
         
-        logger.info(f"[{request_id}] Successfully processed request. Found {len(response_methods)} payment methods")
-        return response_methods
+        logger.info(f"[{request_id}] Successfully retrieved {len(payment_methods)} payment methods")
+        return response
         
     except PaymentMethodError as e:
         logger.error(f"[{request_id}] Payment method error: {str(e)}", exc_info=True)
@@ -172,12 +127,6 @@ async def get_payment_methods(request: PaymentMethodRequest) -> List[PaymentMeth
                 "error": str(e)
             }
         )
-
-# Register MCP tool
-@mcp.tool()
-async def get_payment_methods_tool(request: PaymentMethodRequest) -> List[PaymentMethodResponse]:
-    """MCP tool for getting payment methods."""
-    return await get_payment_methods(request)
 
 if __name__ == "__main__":
     logger.info("Starting SafePayWallet MCP server")
