@@ -2,6 +2,8 @@ import logging
 from typing import List, Dict, Any
 import sys
 from pathlib import Path
+import json
+from datetime import datetime
 
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -74,6 +76,14 @@ MOCK_USERS = {
 # Initialize FastMCP server
 mcp = FastMCP("SafePayWallet")
 
+class PaymentMethodError(Exception):
+    """Custom exception for payment method errors."""
+    def __init__(self, message: str, error_code: str, details: Dict[str, Any] = None):
+        self.message = message
+        self.error_code = error_code
+        self.details = details or {}
+        super().__init__(self.message)
+
 def get_user_payment_methods(user_id: str) -> List[Dict[str, Any]]:
     """
     Get payment methods for a specific user.
@@ -85,12 +95,30 @@ def get_user_payment_methods(user_id: str) -> List[Dict[str, Any]]:
         List[Dict[str, Any]]: List of payment methods
         
     Raises:
-        ValueError: If user_id is not found
+        PaymentMethodError: If user_id is not found or other errors occur
     """
-    if user_id not in MOCK_USERS:
-        raise ValueError(f"User {user_id} not found")
+    logger.info(f"Processing request for user ID: {user_id}")
     
-    return MOCK_USERS[user_id]["payment_methods"]
+    if not user_id:
+        raise PaymentMethodError(
+            "No user ID provided",
+            "MISSING_USER_ID",
+            {"required": "A valid user ID must be provided"}
+        )
+    
+    if user_id not in MOCK_USERS:
+        raise PaymentMethodError(
+            f"User {user_id} not found",
+            "USER_NOT_FOUND",
+            {
+                "invalid_user_id": user_id,
+                "valid_user_ids": list(MOCK_USERS.keys())
+            }
+        )
+    
+    methods = MOCK_USERS[user_id]["payment_methods"]
+    logger.info(f"Found {len(methods)} payment methods for user {user_id}")
+    return methods
 
 async def get_payment_methods(request: PaymentMethodRequest) -> List[PaymentMethodResponse]:
     """
@@ -102,7 +130,8 @@ async def get_payment_methods(request: PaymentMethodRequest) -> List[PaymentMeth
     Returns:
         List[PaymentMethodResponse]: List of payment methods
     """
-    logger.info(f"Getting payment methods for user: {request.user_id}")
+    request_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    logger.info(f"[{request_id}] Received request for payment methods: user_id={request.user_id}")
     
     try:
         methods = get_user_payment_methods(request.user_id)
@@ -118,15 +147,31 @@ async def get_payment_methods(request: PaymentMethodRequest) -> List[PaymentMeth
             for method in methods
         ]
         
-        logger.info(f"Found {len(response_methods)} payment methods")
+        logger.info(f"[{request_id}] Successfully processed request. Found {len(response_methods)} payment methods")
         return response_methods
         
-    except ValueError as e:
-        logger.error(f"Error getting payment methods: {str(e)}")
-        return []
+    except PaymentMethodError as e:
+        logger.error(f"[{request_id}] Payment method error: {str(e)}", exc_info=True)
+        raise PaymentMethodError(
+            e.message,
+            e.error_code,
+            {
+                **e.details,
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        return []
+        logger.error(f"[{request_id}] Unexpected error: {str(e)}", exc_info=True)
+        raise PaymentMethodError(
+            "An unexpected error occurred while processing the request",
+            "INTERNAL_ERROR",
+            {
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
+        )
 
 # Register MCP tool
 @mcp.tool()
